@@ -11,7 +11,7 @@ venv/
 env/
 
 # Environment files
-.env.example
+.env
 
 # OS artifacts
 .DS_Store
