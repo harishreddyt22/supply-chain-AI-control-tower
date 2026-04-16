@@ -1,10 +1,10 @@
-# 🚢 Supply Chain AI — PostgreSQL Control Tower
+# Supply Chain AI — PostgreSQL Control Tower
 
 Real-time disruption detection with **actual PostgreSQL data** — 5 real DB records streamed every 10 seconds via WebSocket. Ships with two CSV files containing **5 million records each** (50 lakh rows).
 
 ---
 
-## 📦 CSV Files Included
+## CSV Files Included
 
 | File | Rows | Size | Description |
 |------|------|------|-------------|
@@ -19,7 +19,7 @@ Real-time disruption detection with **actual PostgreSQL data** — 5 real DB rec
 
 ---
 
-## 🗂 Project Structure
+## Project Structure
 
 ```
 supply_chain_v2/
@@ -65,7 +65,7 @@ supply_chain_v2/
 
 ---
 
-## 🚀 Quick Start
+##  Quick Start
 
 ### Step 1 — Configure Database
 
@@ -118,12 +118,12 @@ Open **http://localhost:5000/dashboard**
 
 ### Step 5 — Start Live Stream
 
-On the dashboard, click **▶ Start Live Stream**.
+On the dashboard, click ** Start Live Stream**.
 The system reads **5 real rows from `route_events`** every **10 seconds** and streams them to the browser via WebSocket.
 
 ---
 
-## 📊 Dashboard Pages
+## Dashboard Pages
 
 | Page | URL | What's Real from DB |
 |------|-----|---------------------|
@@ -134,7 +134,7 @@ The system reads **5 real rows from `route_events`** every **10 seconds** and st
 
 ---
 
-## ⚡ Live Stream Architecture
+## Live Stream Architecture
 
 ```
 PostgreSQL route_events (5M rows)
@@ -159,7 +159,7 @@ STREAM_TABLE=route_events    # which table to read
 
 ---
 
-## ☁️ Cloud Deployment (Kubernetes)
+## Cloud Deployment (Kubernetes)
 
 ```bash
 # 1. Build and push Docker image
@@ -181,7 +181,7 @@ kubectl get ingress -n supply-chain-ai
 
 ---
 
-## 🔌 API Reference
+## API Reference
 
 | Endpoint | Method | DB Backed |
 |----------|--------|-----------|
@@ -203,7 +203,7 @@ kubectl get ingress -n supply-chain-ai
 
 ---
 
-## 🛠 Tech Stack
+## Tech Stack
 
 | Layer | Technology |
 |-------|-----------|
