@@ -1,0 +1,8 @@
+{
+  "offset": 195,
+  "processed_records": 195,
+  "last_batch_at": "2026-04-16T11:30:42.250220",
+  "table": "route_events",
+  "batch_size": 5,
+  "interval_sec": 10
+}

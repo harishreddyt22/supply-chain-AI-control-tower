@@ -1,0 +1,68 @@
+version: "3.9"
+
+services:
+
+  # ── PostgreSQL Database ──────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: supply_chain_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       ${DB_NAME:-supply_chain_db}
+      POSTGRES_USER:     ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-yourpassword}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── pgAdmin 4 Web UI ─────────────────────────────────
+  pgadmin:
+    image: dpage/pgadmin4:8
+    container_name: supply_chain_pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL:    ${PGADMIN_DEFAULT_EMAIL:-admin@supplychain.ai}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-admin123}
+    ports:
+      - "${PGADMIN_PORT:-5050}:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ── Supply Chain AI App ───────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    container_name: supply_chain_ai
+    restart: unless-stopped
+    environment:
+      DB_HOST:     postgres
+      DB_PORT:     5432
+      DB_NAME:     ${DB_NAME:-supply_chain_db}
+      DB_USER:     ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-yourpassword}
+      FLASK_ENV:   production
+      SECRET_KEY:  ${SECRET_KEY:-change-me-in-production}
+      STREAM_BATCH_SIZE:       ${STREAM_BATCH_SIZE:-5}
+      STREAM_INTERVAL_SECONDS: ${STREAM_INTERVAL_SECONDS:-10}
+    ports:
+      - "${PORT:-5000}:5000"
+    volumes:
+      - ./data/uploads:/app/data/uploads
+      - ./data/csv:/app/data/csv    # CSVs accessible for setup_db.py
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  pgadmin_data:

@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Supply Chain AI — Control Tower</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;700;800&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<link rel="stylesheet" href="/static/css/main.css">
+</head>
+<body>
+
+<nav class="sidebar">
+  <div class="sidebar-brand">
+    <div class="brand-icon">⬡</div>
+    <div><div class="brand-name">Supply<span class="accent">Chain</span></div><div class="brand-sub">Control Tower</div></div>
+  </div>
+  <div class="nav-section-label">NAVIGATION</div>
+  <ul class="nav-links">
+    <li><a href="/dashboard" class="nav-link active"><span class="nav-icon">◈</span> Dashboard</a></li>
+    <li><a href="/routing"   class="nav-link"><span class="nav-icon">⤡</span> Route Optimizer</a></li>
+    <li><a href="/analytics" class="nav-link"><span class="nav-icon">◎</span> Analytics</a></li>
+    <li><a href="/ingestion" class="nav-link"><span class="nav-icon">⇅</span> Data Ingestion</a></li>
+  </ul>
+
+  <div class="nav-section-label" style="margin-top:1.5rem">LIVE FEEDS</div>
+  <div class="feed-status">
+    <div class="feed-item"><span class="feed-dot active" id="dot-db"></span>PostgreSQL DB</div>
+    <div class="feed-item"><span class="feed-dot active"></span>GPS/IoT Stream</div>
+    <div class="feed-item"><span class="feed-dot warning"></span>Weather API</div>
+    <div class="feed-item"><span class="feed-dot active"></span>Kafka Stream</div>
+    <div class="feed-item"><span class="feed-dot active"></span>Port Feed</div>
+  </div>
+
+  <div class="sidebar-footer">
+    <button id="btn-sim-toggle" class="btn-sim start" onclick="toggleSimulation()">▶ Start Live Stream</button>
+    <div class="conn-status" id="conn-status">● DISCONNECTED</div>
+  </div>
+</nav>
+
+<main class="main-content">
+  <header class="topbar">
+    <div class="topbar-left">
+      <h1 class="page-title">Real-Time Control Tower</h1>
+      <div class="live-badge">◉ LIVE · PostgreSQL</div>
+    </div>
+    <div class="topbar-right">
+      <div class="db-badge" id="db-status-badge">⬤ Checking DB...</div>
+      <div class="timestamp" id="clock">--:--:--</div>
+      <div class="alert-badge" id="alert-count-badge">0 Alerts</div>
+    </div>
+  </header>
+
+  <!-- KPI ROW -->
+  <section class="kpi-row">
+    <div class="kpi-card"><div class="kpi-label">Active Shipments</div><div class="kpi-value" id="kv-active">—</div><div class="kpi-trend" id="kt-active">Loading...</div></div>
+    <div class="kpi-card risk"><div class="kpi-label">At-Risk Shipments</div><div class="kpi-value" id="kv-risk">—</div><div class="kpi-trend" id="kt-risk">Loading...</div></div>
+    <div class="kpi-card"><div class="kpi-label">On-Time Rate</div><div class="kpi-value" id="kv-ontime">—</div><div class="kpi-trend" id="kt-ontime">Loading...</div></div>
+    <div class="kpi-card critical"><div class="kpi-label">Critical Alerts</div><div class="kpi-value" id="kv-alerts">—</div><div class="kpi-trend" id="kt-alerts">Loading...</div></div>
+    <div class="kpi-card success"><div class="kpi-label">Cost Saved Today</div><div class="kpi-value" id="kv-savings">—</div><div class="kpi-trend" id="kt-savings">Loading...</div></div>
+    <div class="kpi-card"><div class="kpi-label">Routes Optimised</div><div class="kpi-value" id="kv-optimized">—</div><div class="kpi-trend" id="kt-optimized">Loading...</div></div>
+  </section>
+
+  <div class="dashboard-grid">
+
+    <!-- MAP -->
+    <div class="panel map-panel">
+      <div class="panel-header">
+        <span class="panel-title">🌐 Global Risk Heatmap — Live from PostgreSQL</span>
+        <div class="panel-controls" style="display:flex;gap:4px">
+          <button class="btn-sm active" onclick="setMapLayer('heatmap')"     id="btn-heatmap">Heatmap</button>
+          <button class="btn-sm"        onclick="setMapLayer('shipments')"   id="btn-shipments">Shipments</button>
+          <button class="btn-sm"        onclick="setMapLayer('bottlenecks')" id="btn-bottlenecks">Bottlenecks</button>
+          <button class="btn-sm"        onclick="refreshMap()">↺</button>
+        </div>
+      </div>
+      <div style="position:relative;flex:1">
+        <div id="map" style="height:300px"></div>
+        <div id="map-message"></div>
+      </div>
+      <div class="map-legend">
+        <span class="leg low">● Low</span><span class="leg med">● Medium</span>
+        <span class="leg high">● High</span><span class="leg crit">● Critical</span>
+      </div>
+    </div>
+
+    <!-- LIVE STREAM PANEL -->
+    <div class="panel stream-panel">
+      <div class="panel-header">
+        <span class="panel-title">Live DB Stream</span>
+        <span class="badge-count" id="stream-tick-badge">0</span>
+      </div>
+      <div class="stream-stats" id="stream-stats">
+        <span class="stream-stat">Start stream to see records</span>
+      </div>
+      <div class="stream-health" id="stream-health">Waiting for stream...</div>
+      <div class="stream-log" id="stream-log">
+        <div class="stream-item"><span class="stream-ts">--:--:--</span><span style="color:var(--text-muted)">Press ▶ Start Live Stream to begin reading from PostgreSQL</span></div>
+      </div>
+    </div>
+
+    <!-- FORECAST CHART -->
+    <div class="panel chart-panel">
+      <div class="panel-header">
+        <span class="panel-title">Forecast (24h)</span>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span id="forecast-source" style="font-size:9px;color:var(--text-muted);font-family:'Space Mono',monospace"></span>
+          <select id="forecast-metric" onchange="loadForecast()" class="select-sm">
+            <option value="delay_probability">Delay Probability</option>
+            <option value="throughput">Throughput</option>
+            <option value="on_time_rate">On-Time Rate</option>
+            <option value="cost_index">Cost Index</option>
+          </select>
+        </div>
+      </div>
+      <canvas id="forecastChart" style="padding:8px 12px"></canvas>
+    </div>
+
+    <!-- BOTTLENECKS -->
+    <div class="panel bottleneck-panel">
+      <div class="panel-header">
+        <span class="panel-title">Active Bottlenecks — From DB</span>
+        <button class="btn-sm" onclick="refreshBottlenecks()">↺ Refresh</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Location</th><th>Type</th><th>Severity</th><th>Events</th><th>Avg Delay</th><th>Recommendation</th></tr></thead>
+          <tbody id="bottleneck-tbody"><tr><td colspan="6" class="empty-state">Loading...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- SHIPMENTS TABLE -->
+    <div class="panel shipment-panel">
+      <div class="panel-header">
+        <span class="panel-title">Shipments — From PostgreSQL</span>
+        <input type="text" id="shipment-search" placeholder="Search ID / carrier / port..." class="search-input" oninput="filterShipments()">
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Shipment ID</th><th>Carrier</th><th>Route</th><th>Mode</th><th>Status</th><th>Risk</th><th>ETA</th></tr></thead>
+          <tbody id="shipment-tbody"><tr><td colspan="7" class="empty-state">Loading from PostgreSQL...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- MODE SPLIT -->
+    <div class="panel mini-chart-panel">
+      <div class="panel-header"><span class="panel-title">Transport Mode Split</span></div>
+      <canvas id="modeSplitChart"></canvas>
+    </div>
+
+    <!-- CARRIER PERFORMANCE -->
+    <div class="panel carrier-panel">
+      <div class="panel-header"><span class="panel-title">Carrier Performance</span></div>
+      <div id="carrier-bars"><div class="empty-state">Connect DB to load</div></div>
+    </div>
+
+  </div>
+</main>
+
+<script src="/static/js/dashboard.js"></script>
+<script>
+  // Update stream tick badge
+  if(typeof io !== 'undefined'){
+    document.addEventListener('DOMContentLoaded', () => {
+      if(window.socket){
+        window.socket.on('live_stream_batch', ({tick}) => {
+          const el = document.getElementById('stream-tick-badge');
+          if(el) el.textContent = 'Tick ' + tick;
+        });
+      }
+    });
+  }
+</script>
+</body>
+</html>

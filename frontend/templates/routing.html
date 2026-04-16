@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Route Optimizer — Supply Chain AI</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;700;800&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="/static/css/main.css">
+<style>
+  body,html { overflow:auto; }
+  .main-content { overflow:auto; height:auto; }
+  .routing-wrap { display:grid; grid-template-columns:360px 1fr; min-height:calc(100vh - 60px); gap:1px; background:var(--border); }
+  .form-panel { background:var(--bg-card); padding:18px; overflow-y:auto; }
+  .map-area   { background:var(--bg-card); display:flex; flex-direction:column; }
+  #route-map  { flex:1; min-height:500px; }
+  .section-title { font-family:var(--font-display); font-size:12px; font-weight:700; color:var(--text-sec); margin:14px 0 8px; border-bottom:1px solid var(--border); padding-bottom:5px; letter-spacing:.03em; }
+  .slider-row { display:flex; align-items:center; gap:10px; margin:6px 0; }
+  .slider-label { font-size:10px; color:var(--text-sec); width:60px; font-family:var(--font-mono); }
+  input[type=range] { flex:1; accent-color:var(--blue); }
+  .slider-val { font-size:10px; font-family:var(--font-mono); color:var(--blue); width:35px; text-align:right; }
+  .alt-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; padding:16px; background:var(--bg-base); border-top:1px solid var(--border); }
+  .alt-card { background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:12px; cursor:pointer; transition:all .2s; }
+  .alt-card:hover,.alt-card.selected { border-color:var(--cyan); background:rgba(6,182,212,.05); }
+  .alt-tag { font-size:9px; font-family:var(--font-mono); letter-spacing:.1em; margin-bottom:5px; }
+  .db-note { font-size:10px; color:var(--cyan); font-family:var(--font-mono); padding:6px 10px; background:rgba(6,182,212,.06); border:1px solid rgba(6,182,212,.2); border-radius:var(--radius-sm); margin-bottom:12px; }
+</style>
+</head>
+<body>
+<nav class="sidebar">
+  <div class="sidebar-brand"><div class="brand-icon">⬡</div><div><div class="brand-name">CHAIN<span class="accent">AI</span></div><div class="brand-sub">PostgreSQL Edition</div></div></div>
+  <div class="nav-section-label">NAVIGATION</div>
+  <ul class="nav-links">
+    <li><a href="/dashboard" class="nav-link"><span class="nav-icon">◈</span> Dashboard</a></li>
+    <li><a href="/routing"   class="nav-link active"><span class="nav-icon">⤡</span> Route Optimizer</a></li>
+    <li><a href="/analytics" class="nav-link"><span class="nav-icon">◎</span> Analytics</a></li>
+    <li><a href="/ingestion" class="nav-link"><span class="nav-icon">⇅</span> Data Ingestion</a></li>
+  </ul>
+</nav>
+
+<main class="main-content">
+  <header class="topbar">
+    <div class="topbar-left">
+      <h1 class="page-title">⤡ Dynamic Route Optimizer</h1>
+      <div class="live-badge">Shortest Path</div>
+    </div>
+    <div class="topbar-right"><div class="timestamp" id="clock">--:--:--</div></div>
+  </header>
+
+  <div class="routing-wrap">
+    <!-- LEFT PANEL -->
+    <div class="form-panel">
+      <div class="db-note">Congestion data sourced from <b>route_events</b> table in PostgreSQL</div>
+
+      <div class="section-title">Route Parameters</div>
+      <div class="form-group" style="margin-bottom:10px">
+        <label class="form-label">ORIGIN PORT</label>
+        <select class="form-select" id="origin">
+          <option>Shanghai</option><option>Singapore</option><option>Mumbai</option>
+          <option>Dubai</option><option>Tokyo</option><option>Busan</option><option>Sydney</option>
+        </select>
+      </div>
+      <div class="form-group" style="margin-bottom:10px">
+        <label class="form-label">DESTINATION PORT</label>
+        <select class="form-select" id="destination">
+          <option>Rotterdam</option><option>Los_Angeles</option><option>New_York</option>
+          <option>Hamburg</option><option>Antwerp</option>
+        </select>
+      </div>
+      <div class="form-group" style="margin-bottom:14px">
+        <label class="form-label">TRANSPORT MODE</label>
+        <select class="form-select" id="mode">
+          <option value="sea">Sea Freight</option>
+          <option value="air">Air Freight</option>
+          <option value="rail">Rail</option>
+          <option value="road">Road</option>
+        </select>
+      </div>
+
+      <div class="section-title">Multi-Objective Weights</div>
+      <div class="slider-row"><span class="slider-label">TIME</span><input type="range" min="0" max="100" value="40" id="w-time" oninput="updateSliders()"><span class="slider-val" id="sv-time">40%</span></div>
+      <div class="slider-row"><span class="slider-label">COST</span><input type="range" min="0" max="100" value="30" id="w-cost" oninput="updateSliders()"><span class="slider-val" id="sv-cost">30%</span></div>
+      <div class="slider-row"><span class="slider-label">RISK</span><input type="range" min="0" max="100" value="30" id="w-risk" oninput="updateSliders()"><span class="slider-val" id="sv-risk">30%</span></div>
+
+      <button class="btn-primary" style="width:100%;margin-top:16px" onclick="optimizeRoute()">⤡ FIND OPTIMAL ROUTE</button>
+
+      <div class="rl-box" id="rl-box" style="display:none;margin-top:14px">
+        <div class="rl-title">◈ RL POLICY DECISION</div>
+        <div id="rl-action" style="font-size:13px;font-weight:600;color:#e8f0ff;margin-bottom:4px"></div>
+        <div id="rl-explain" style="font-size:11px;color:#7a9cc0"></div>
+        <div id="rl-confidence" style="font-size:10px;font-family:'Space Mono',monospace;color:#8b5cf6;margin-top:6px"></div>
+      </div>
+
+      <div id="route-metrics" style="display:none;margin-top:14px">
+        <div class="section-title">Route Metrics</div>
+        <div class="route-metrics">
+          <div class="metric-box"><div class="metric-box-label">TIME</div><div class="metric-box-value" id="m-time">—</div><div style="font-size:9px;color:#7a9cc0">hours</div></div>
+          <div class="metric-box"><div class="metric-box-label">COST</div><div class="metric-box-value" id="m-cost" style="color:var(--green)">—</div><div style="font-size:9px;color:#7a9cc0">USD</div></div>
+          <div class="metric-box"><div class="metric-box-label">RISK</div><div class="metric-box-value" id="m-risk" style="color:var(--orange)">—</div><div style="font-size:9px;color:#7a9cc0">score</div></div>
+        </div>
+        <div style="margin-top:10px"><div class="form-label" style="margin-bottom:4px">OPTIMAL PATH</div><div id="route-path" class="route-path"></div></div>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:6px" id="db-cong-note"></div>
+      </div>
+    </div>
+
+    <!-- RIGHT MAP -->
+    <div class="map-area">
+      <div class="panel-header">
+        <span class="panel-title">Network Graph — DB-Backed Congestion</span>
+        <span style="font-size:10px;color:var(--text-muted);font-family:'Space Mono',monospace">Hover nodes / edges for details</span>
+      </div>
+      <div id="route-map"></div>
+    </div>
+  </div>
+
+  <!-- ALTERNATIVES -->
+  <div id="alt-section" style="display:none">
+    <div style="padding:12px 16px;background:var(--bg-surface);border-top:1px solid var(--border)">
+      <span style="font-family:var(--font-display);font-size:13px;font-weight:700;color:var(--text-sec)">Route Alternatives — Tradeoff Analysis</span>
+    </div>
+    <div class="alt-grid" id="alt-grid"></div>
+  </div>
+</main>
+
+<script>
+  setInterval(() => { const el=document.getElementById('clock'); if(el) el.textContent=new Date().toLocaleTimeString(); }, 1000);
+  let rmap=null, routeLine=null, nodeMarkers=[];
+
+  function initRouteMap() {
+    rmap = L.map('route-map', { center:[25,50], zoom:2, attributionControl:false });
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { opacity:0.8 }).addTo(rmap);
+    loadNetworkGraph();
+  }
+
+  function loadNetworkGraph() {
+    fetch('/api/network-graph').then(r=>r.json()).then(({data}) => {
+      data.edges.forEach(e => {
+        const src=data.nodes.find(n=>n.id===e.source), dst=data.nodes.find(n=>n.id===e.target);
+        if(!src||!dst) return;
+        const color = e.risk<0.3?'#10b981':e.risk<0.6?'#f59e0b':'#ef4444';
+        L.polyline([[src.lat,src.lon],[dst.lat,dst.lon]], { color, weight:1.5, opacity:0.5, dashArray:e.risk>0.65?'4,4':null })
+          .addTo(rmap)
+          .bindPopup(`<div style="font-size:11px;font-family:'IBM Plex Sans',sans-serif">
+            <b style="color:#e8f0ff">${e.source} → ${e.target}</b><br>
+            ${e.distance?.toLocaleString()} km &nbsp;·&nbsp;
+            Risk: <b style="color:${color}">${(e.risk*100).toFixed(0)}%</b><br>
+            Congestion: ${(e.congestion*100).toFixed(0)}% <span style="color:#06b6d4;font-size:9px">(from DB)</span><br>
+            Modes: ${e.modes?.join(', ')}
+          </div>`);
+      });
+      data.nodes.forEach(n => {
+        const c={'port':'#3b82f6','hub':'#8b5cf6','transit':'#f59e0b'}[n.type]||'#7a9cc0';
+        const m = L.circleMarker([n.lat,n.lon], { radius:6, fillColor:c, color:'#fff', weight:1, fillOpacity:.9 })
+          .addTo(rmap)
+          .bindTooltip(`<span style="font-size:11px;font-family:'Space Mono',monospace">${n.id}</span>`)
+          .bindPopup(`<div style="font-size:11px;font-family:'IBM Plex Sans',sans-serif">
+            <b style="color:#e8f0ff">${n.id.replace(/_/g,' ')}</b><br>
+            Type: ${n.type} &nbsp;·&nbsp; Capacity: ${(n.capacity*100).toFixed(0)}%
+          </div>`);
+        nodeMarkers.push(m);
+      });
+    });
+  }
+
+  function updateSliders() {
+    ['time','cost','risk'].forEach(k => {
+      const v = document.getElementById(`w-${k}`)?.value;
+      const el = document.getElementById(`sv-${k}`);
+      if(el) el.textContent = v+'%';
+    });
+  }
+
+  function optimizeRoute() {
+    const origin = document.getElementById('origin')?.value;
+    const dest   = document.getElementById('destination')?.value;
+    const mode   = document.getElementById('mode')?.value;
+    const t=+document.getElementById('w-time').value/100;
+    const c=+document.getElementById('w-cost').value/100;
+    const ri=+document.getElementById('w-risk').value/100;
+
+    fetch('/api/optimize-route',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({origin, destination:dest, mode, priorities:{time:t,cost:c,risk:ri}})
+    }).then(r=>r.json()).then(({data}) => {
+      // Draw route on map
+      if(routeLine) rmap.removeLayer(routeLine);
+      const coords = data.path_coords?.map(p=>[p.lat,p.lon])||[];
+      if(coords.length){
+        routeLine = L.polyline(coords,{color:'#06b6d4',weight:3,opacity:.9}).addTo(rmap);
+        rmap.fitBounds(routeLine.getBounds(),{padding:[20,20]});
+        coords.forEach((c,i) => setTimeout(()=>{
+          L.circleMarker(c,{radius:7,fillColor:'#06b6d4',color:'#fff',weight:2,fillOpacity:1})
+            .addTo(rmap).bindTooltip(data.path[i]?.replace(/_/g,' ')||'');
+        }, i*100));
+      }
+      // Metrics
+      const m=data.metrics||{};
+      document.getElementById('m-time').textContent = m.total_time_hours||'—';
+      document.getElementById('m-cost').textContent = m.total_cost_usd?'$'+m.total_cost_usd.toLocaleString():'—';
+      document.getElementById('m-risk').textContent = m.total_risk_score?(m.total_risk_score*100).toFixed(1)+'%':'—';
+      document.getElementById('route-path').textContent = (data.path||[]).map(p=>p.replace(/_/g,' ')).join(' → ');
+      document.getElementById('route-metrics').style.display='block';
+      const dbNote=document.getElementById('db-cong-note');
+      if(dbNote) dbNote.textContent = data.db_congestion_used?'✓ Congestion pulled from PostgreSQL route_events':'⚠ DB offline — using estimated congestion';
+
+      // RL policy
+      const rl=data.rl_adjustment||{};
+      document.getElementById('rl-box').style.display='block';
+      document.getElementById('rl-action').textContent=(rl.action||'').replace(/_/g,' ').toUpperCase();
+      document.getElementById('rl-explain').textContent=rl.explanation||'';
+      document.getElementById('rl-confidence').textContent=`Confidence: ${((rl.confidence||0)*100).toFixed(0)}% · Policy: ${rl.policy||''}`;
+
+      // Alternatives
+      loadAlts(origin, dest);
+    });
+  }
+
+  function loadAlts(origin, dest) {
+    fetch('/api/route-alternatives',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({shipment_id:'DEMO',origin,destination:dest})
+    }).then(r=>r.json()).then(({data}) => {
+      const grid=document.getElementById('alt-grid');
+      const labels=[
+        {tag:'FASTEST',  color:'#06b6d4'},
+        {tag:'CHEAPEST', color:'#10b981'},
+        {tag:'SAFEST',   color:'#8b5cf6'},
+      ];
+      grid.innerHTML=(data.alternatives||[]).slice(0,3).map((alt,i)=>{
+        const cfg=labels[i]||labels[0];
+        const m=alt.metrics||{};
+        return `<div class="alt-card" onclick="document.querySelectorAll('.alt-card').forEach(c=>c.classList.remove('selected'));this.classList.add('selected')">
+          <div class="alt-tag" style="color:${cfg.color}">${cfg.tag}</div>
+          <div style="font-size:12px;font-weight:700;color:#e8f0ff;margin-bottom:5px">${(alt.path||[]).slice(0,3).map(p=>p.replace(/_/g,' ')).join(' → ')}...</div>
+          <div style="font-size:11px;color:#7a9cc0">
+            ⏱ ${m.total_time_hours}h &nbsp;·&nbsp; 💲${((m.total_cost_usd||0)/1000).toFixed(0)}K &nbsp;·&nbsp; ⚠ ${((m.total_risk_score||0)*100).toFixed(0)}%
+          </div>
+        </div>`;
+      }).join('');
+      document.getElementById('alt-section').style.display='block';
+    });
+  }
+
+  document.addEventListener('DOMContentLoaded', initRouteMap);
+</script>
+</body>
+</html>

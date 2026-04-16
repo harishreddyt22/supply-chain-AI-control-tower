@@ -1,0 +1,299 @@
+# ═══════════════════════════════════════════════════════
+# Supply Chain AI — Kubernetes Cloud Deployment
+# AWS EKS / GKE / Azure AKS compatible
+# ═══════════════════════════════════════════════════════
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: supply-chain-ai
+  labels: { app: supply-chain-ai }
+
+---
+# ── Secrets (DB credentials) ────────────────────────────
+apiVersion: v1
+kind: Secret
+metadata:
+  name: supply-chain-secrets
+  namespace: supply-chain-ai
+type: Opaque
+stringData:
+  DB_PASSWORD: "CHANGE_ME_IN_PRODUCTION"
+  SECRET_KEY:  "CHANGE_ME_LONG_RANDOM_STRING"
+
+---
+# ── ConfigMap ────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: supply-chain-config
+  namespace: supply-chain-ai
+data:
+  DB_HOST:                 "postgres-svc"
+  DB_PORT:                 "5432"
+  DB_NAME:                 "supply_chain_db"
+  DB_USER:                 "postgres"
+  FLASK_ENV:               "production"
+  STREAM_BATCH_SIZE:       "5"
+  STREAM_INTERVAL_SECONDS: "10"
+  STREAM_TABLE:            "route_events"
+
+---
+# ── PostgreSQL Deployment ─────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: supply-chain-ai
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: postgres } }
+  template:
+    metadata: { labels: { app: postgres } }
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports: [{ containerPort: 5432 }]
+          env:
+            - { name: POSTGRES_DB,       value: supply_chain_db }
+            - { name: POSTGRES_USER,     value: postgres }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: supply-chain-secrets, key: DB_PASSWORD } }
+          volumeMounts:
+            - name: pg-storage
+              mountPath: /var/lib/postgresql/data
+          resources:
+            requests: { cpu: "500m", memory: "1Gi" }
+            limits:   { cpu: "2000m", memory: "4Gi" }
+      volumes:
+        - name: pg-storage
+          persistentVolumeClaim: { claimName: pg-pvc }
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pg-pvc
+  namespace: supply-chain-ai
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: standard
+  resources: { requests: { storage: 100Gi } }
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-svc
+  namespace: supply-chain-ai
+spec:
+  selector: { app: postgres }
+  ports: [{ port: 5432, targetPort: 5432 }]
+  type: ClusterIP
+
+---
+# ── pgAdmin Deployment ───────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pgadmin
+  namespace: supply-chain-ai
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: pgadmin } }
+  template:
+    metadata: { labels: { app: pgadmin } }
+    spec:
+      containers:
+        - name: pgadmin
+          image: dpage/pgadmin4:8
+          ports: [{ containerPort: 80 }]
+          env:
+            - { name: PGADMIN_DEFAULT_EMAIL,    value: "admin@supplychain.ai" }
+            - { name: PGADMIN_DEFAULT_PASSWORD,  value: "admin123" }
+          resources:
+            requests: { cpu: "200m", memory: "256Mi" }
+            limits:   { cpu: "500m", memory: "512Mi" }
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pgadmin-svc
+  namespace: supply-chain-ai
+spec:
+  selector: { app: pgadmin }
+  ports: [{ port: 5050, targetPort: 80 }]
+  type: ClusterIP
+
+---
+# ── App Deployment ────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: supply-chain-ai
+  namespace: supply-chain-ai
+  labels: { app: supply-chain-ai, version: "2.0" }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: supply-chain-ai } }
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
+  template:
+    metadata:
+      labels: { app: supply-chain-ai }
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "5000"
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: supply-chain-ai
+          image: your-registry/supply-chain-ai:latest   # ← replace
+          ports: [{ containerPort: 5000, name: http }]
+          envFrom:
+            - configMapRef: { name: supply-chain-config }
+          env:
+            - name: DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: supply-chain-secrets, key: DB_PASSWORD } }
+            - name: SECRET_KEY
+              valueFrom: { secretKeyRef: { name: supply-chain-secrets, key: SECRET_KEY } }
+          volumeMounts:
+            - name: uploads
+              mountPath: /app/data/uploads
+          resources:
+            requests: { cpu: "500m", memory: "512Mi" }
+            limits:   { cpu: "2000m", memory: "2Gi" }
+          livenessProbe:
+            httpGet: { path: /api/kpis, port: 5000 }
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          readinessProbe:
+            httpGet: { path: /api/db/status, port: 5000 }
+            initialDelaySeconds: 15
+            periodSeconds: 10
+      volumes:
+        - name: uploads
+          persistentVolumeClaim: { claimName: uploads-pvc }
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: uploads-pvc
+  namespace: supply-chain-ai
+spec:
+  accessModes: [ReadWriteMany]
+  storageClassName: standard
+  resources: { requests: { storage: 20Gi } }
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: supply-chain-ai-hpa
+  namespace: supply-chain-ai
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: supply-chain-ai
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource: { name: cpu,    target: { type: Utilization, averageUtilization: 65 } }
+    - type: Resource
+      resource: { name: memory, target: { type: Utilization, averageUtilization: 75 } }
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: supply-chain-ai-svc
+  namespace: supply-chain-ai
+spec:
+  selector: { app: supply-chain-ai }
+  ports: [{ name: http, port: 80, targetPort: 5000 }]
+  type: ClusterIP
+
+---
+# ── Ingress (NGINX + TLS + WebSocket) ────────────────────
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: supply-chain-ingress
+  namespace: supply-chain-ai
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      proxy_set_header Upgrade $http_upgrade;
+      proxy_set_header Connection "upgrade";
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  tls:
+    - hosts: [supply-chain-ai.yourdomain.com]
+      secretName: supply-chain-tls
+  rules:
+    - host: supply-chain-ai.yourdomain.com      # ← replace
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: supply-chain-ai-svc, port: { number: 80 } }
+          - path: /pgadmin
+            pathType: Prefix
+            backend:
+              service: { name: pgadmin-svc, port: { number: 5050 } }
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: supply-chain-pdb
+  namespace: supply-chain-ai
+spec:
+  minAvailable: 1
+  selector: { matchLabels: { app: supply-chain-ai } }
+
+---
+# ── Nightly ETL CronJob ───────────────────────────────────
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: etl-nightly-batch
+  namespace: supply-chain-ai
+spec:
+  schedule: "0 2 * * *"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: etl-batch
+              image: your-registry/supply-chain-ai:latest   # ← replace
+              command:
+                - python
+                - -c
+                - |
+                  import requests, json
+                  r = requests.post('http://supply-chain-ai-svc/api/etl/run',
+                                    json={'source': 'historical_db'}, timeout=600)
+                  print(json.dumps(r.json(), indent=2))
+              envFrom:
+                - configMapRef: { name: supply-chain-config }
+              env:
+                - name: DB_PASSWORD
+                  valueFrom: { secretKeyRef: { name: supply-chain-secrets, key: DB_PASSWORD } }
+              resources:
+                requests: { cpu: "250m", memory: "512Mi" }
+                limits:   { cpu: "1000m", memory: "2Gi" }

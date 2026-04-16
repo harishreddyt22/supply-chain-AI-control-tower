@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Analytics — Supply Chain AI</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;700;800&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<link rel="stylesheet" href="/static/css/main.css">
+<style>
+  body,html { overflow:auto; }
+  .main-content { overflow:auto; height:auto; }
+  .analytics-grid { display:grid; grid-template-columns:1fr 1fr; gap:1px; background:var(--border); }
+  .chart-card { background:var(--bg-card); padding:16px; }
+  .chart-card canvas { max-height:220px; }
+  .full-width { grid-column:1/-1; }
+  .eta-result-box { background:var(--bg-surface); border:1px solid var(--border); border-radius:var(--radius); padding:14px; margin-top:12px; }
+  .feat-row { display:flex; align-items:center; gap:8px; margin:5px 0; }
+  .feat-name { font-size:10px; color:var(--text-sec); width:170px; font-family:var(--font-mono); }
+  .feat-bg { flex:1; height:5px; background:var(--border); border-radius:2px; }
+  .feat-fg { height:100%; border-radius:2px; }
+  .feat-pct { font-size:10px; font-family:var(--font-mono); color:var(--blue); width:35px; text-align:right; }
+  .db-query-box { background:var(--bg-base); border:1px solid var(--border); border-radius:var(--radius-sm); padding:8px; font-family:'Space Mono',monospace; font-size:11px; color:var(--cyan); width:100%; min-height:60px; outline:none; resize:vertical; }
+  .query-result { margin-top:10px; overflow-x:auto; }
+</style>
+</head>
+<body>
+<nav class="sidebar">
+  <div class="sidebar-brand"><div class="brand-icon">⬡</div><div><div class="brand-name">CHAIN<span class="accent">AI</span></div><div class="brand-sub">PostgreSQL Edition</div></div></div>
+  <div class="nav-section-label">NAVIGATION</div>
+  <ul class="nav-links">
+    <li><a href="/dashboard" class="nav-link"><span class="nav-icon">◈</span> Dashboard</a></li>
+    <li><a href="/routing"   class="nav-link"><span class="nav-icon">⤡</span> Route Optimizer</a></li>
+    <li><a href="/analytics" class="nav-link active"><span class="nav-icon">◎</span> Analytics</a></li>
+    <li><a href="/ingestion" class="nav-link"><span class="nav-icon">⇅</span> Data Ingestion</a></li>
+  </ul>
+</nav>
+
+<main class="main-content">
+  <header class="topbar">
+    <div class="topbar-left">
+      <h1 class="page-title">◎ Analytics & ML Predictions</h1>
+      <div class="live-badge">RandomForest · GBM · TimeSeries · PostgreSQL</div>
+    </div>
+    <div class="topbar-right"><div class="timestamp" id="clock">--:--:--</div></div>
+  </header>
+
+  <div class="analytics-grid">
+
+    <!-- Demand Forecast -->
+    <div class="chart-card full-width">
+      <div class="panel-header" style="padding:0 0 10px">
+        <span class="panel-title">30-Day Demand Forecast</span>
+        <div style="display:flex;gap:8px;align-items:center">
+          <span id="demand-source" style="font-size:9px;color:var(--text-muted);font-family:'Space Mono',monospace"></span>
+          <button class="btn-sm" onclick="loadDemand()">↺</button>
+        </div>
+      </div>
+      <canvas id="demandChart"></canvas>
+    </div>
+
+    <!-- On-Time Forecast -->
+    <div class="chart-card">
+      <div class="panel-header" style="padding:0 0 10px"><span class="panel-title">📈 On-Time Rate Forecast (48h)</span></div>
+      <canvas id="onTimeChart"></canvas>
+    </div>
+
+    <!-- Cost Forecast -->
+    <div class="chart-card">
+      <div class="panel-header" style="padding:0 0 10px"><span class="panel-title">💲 Cost Index Forecast (48h)</span></div>
+      <canvas id="costChart"></canvas>
+    </div>
+
+    <!-- ETA Predictor -->
+    <div class="chart-card">
+      <div class="panel-header" style="padding:0 0 10px"><span class="panel-title">🕐 ETA Predictor</span></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px">
+        <div class="form-group"><label class="form-label">DISTANCE KM</label><input class="form-input" type="number" id="eta-dist" value="8000"></div>
+        <div class="form-group"><label class="form-label">MODE</label>
+          <select class="form-select" id="eta-mode">
+            <option value="sea">Sea</option><option value="air">Air</option>
+            <option value="rail">Rail</option><option value="road">Road</option>
+          </select>
+        </div>
+        <div class="form-group"><label class="form-label">CONGESTION</label>
+          <input type="range" min="0" max="100" value="30" id="eta-cong" oninput="document.getElementById('eta-cv').textContent=this.value+'%'">
+          <span style="font-size:10px;color:var(--blue);font-family:'Space Mono',monospace" id="eta-cv">30%</span>
+        </div>
+      </div>
+      <button class="btn-primary" onclick="predictETA()">Predict ETA</button>
+      <div class="eta-result-box" id="eta-result" style="display:none">
+        <div style="font-size:9px;font-family:'Space Mono',monospace;color:var(--text-muted);margin-bottom:8px">ETA PREDICTION</div>
+        <div style="font-size:22px;font-family:'Space Mono',monospace;font-weight:700;color:#06b6d4" id="eta-main">—</div>
+        <div style="font-size:11px;color:var(--text-sec);margin-top:4px" id="eta-sub">—</div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px">
+          <div class="scenario-box"><div style="font-size:9px;font-family:'Space Mono',monospace;color:var(--green)">OPTIMISTIC</div><div style="font-size:16px;font-family:'Space Mono',monospace;font-weight:700" id="eta-opt">—</div><div style="font-size:9px;color:var(--text-muted)">hours</div></div>
+          <div class="scenario-box"><div style="font-size:9px;font-family:'Space Mono',monospace;color:var(--blue)">EXPECTED</div><div style="font-size:16px;font-family:'Space Mono',monospace;font-weight:700" id="eta-exp">—</div><div style="font-size:9px;color:var(--text-muted)">hours</div></div>
+          <div class="scenario-box"><div style="font-size:9px;font-family:'Space Mono',monospace;color:var(--red)">PESSIMISTIC</div><div style="font-size:16px;font-family:'Space Mono',monospace;font-weight:700" id="eta-pes">—</div><div style="font-size:9px;color:var(--text-muted)">hours</div></div>
+        </div>
+        <div style="margin-top:10px" id="eta-factors"></div>
+      </div>
+    </div>
+
+    <!-- Feature Importance -->
+    <div class="chart-card">
+      <div class="panel-header" style="padding:0 0 10px"><span class="panel-title">ML Feature Importance</span></div>
+      <div id="feat-importance"></div>
+    </div>
+
+    <!-- Live DB Query -->
+    <div class="chart-card full-width">
+      <div class="panel-header" style="padding:0 0 10px">
+        <span class="panel-title">🗄 Live DB Query (SELECT only)</span>
+        <button class="btn-sm" onclick="runQuery()">▶ Run</button>
+      </div>
+      <textarea class="db-query-box" id="query-input">SELECT carrier, COUNT(*) AS shipments, ROUND(AVG(delay_hours),1) AS avg_delay, ROUND(AVG(risk_score),3) AS avg_risk
+FROM shipments_master
+GROUP BY carrier ORDER BY avg_delay DESC LIMIT 10</textarea>
+      <div class="query-result" id="query-result"></div>
+    </div>
+
+  </div>
+</main>
+
+<script>
+  setInterval(()=>{ const el=document.getElementById('clock'); if(el) el.textContent=new Date().toLocaleTimeString(); }, 1000);
+
+  const opts = {
+    responsive:true, maintainAspectRatio:true, plugins:{legend:{display:false}},
+    scales:{
+      x:{ticks:{color:'#3d5878',maxTicksLimit:8,font:{family:'Space Mono',size:8}}, grid:{color:'rgba(30,45,66,.5)'}},
+      y:{ticks:{color:'#3d5878',font:{family:'Space Mono',size:8}},              grid:{color:'rgba(30,45,66,.5)'}}
+    }, animation:{duration:600}
+  };
+
+  let demandChart, onTimeChart, costChart;
+
+  function initCharts() {
+    demandChart = new Chart(document.getElementById('demandChart'), {
+      type:'bar',
+      data:{labels:[],datasets:[{data:[],backgroundColor:'rgba(59,130,246,.5)',borderColor:'#3b82f6',borderWidth:1}]},
+      options:{...opts}
+    });
+    const lineDs = (color) => ([
+      {data:[],borderColor:color,backgroundColor:color.replace(')',',0.08)').replace('rgb','rgba'),fill:true,tension:.4,pointRadius:0,borderWidth:2},
+      {data:[],borderColor:color.replace(')',',0.3)').replace('rgb','rgba'),borderWidth:1,borderDash:[4,4],fill:false,pointRadius:0},
+      {data:[],borderColor:color.replace(')',',0.3)').replace('rgb','rgba'),borderWidth:1,borderDash:[4,4],fill:'-1',backgroundColor:color.replace(')',',0.04)').replace('rgb','rgba'),pointRadius:0},
+    ]);
+    onTimeChart = new Chart(document.getElementById('onTimeChart'),{type:'line',data:{labels:[],datasets:lineDs('rgb(16,185,129)')},options:{...opts}});
+    costChart   = new Chart(document.getElementById('costChart'),  {type:'line',data:{labels:[],datasets:lineDs('rgb(245,158,11)')},options:{...opts}});
+  }
+
+  function fillLineChart(chart, data) {
+    chart.data.labels = data.timestamps.map((_,i)=>`+${i}h`);
+    chart.data.datasets[0].data = data.values;
+    chart.data.datasets[1].data = data.upper_bound;
+    chart.data.datasets[2].data = data.lower_bound;
+    chart.update();
+  }
+
+  function loadDemand() {
+    fetch('/api/predictions/demand').then(r=>r.json()).then(({data})=>{
+      demandChart.data.labels = data.dates.map(d=>d.slice(5));
+      demandChart.data.datasets[0].data = data.demand_units;
+      demandChart.update();
+      const src=document.getElementById('demand-source');
+      if(src) src.textContent = data.db_backed?'📊 Source: PostgreSQL':'📊 Source: ML model';
+    });
+  }
+
+  function predictETA() {
+    const dist=+document.getElementById('eta-dist').value;
+    const mode=document.getElementById('eta-mode').value;
+    const cong=+document.getElementById('eta-cong').value/100;
+    fetch('/api/predictions/eta',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({distance_km:dist,transport_mode:mode,port_congestion:cong,weather_severity:.2,num_stops:2})
+    }).then(r=>r.json()).then(({data})=>{
+      document.getElementById('eta-result').style.display='block';
+      document.getElementById('eta-main').textContent = data.eta_hours+' hours';
+      document.getElementById('eta-sub').textContent   = `ETA: ${new Date(data.eta).toLocaleString()} · On-time prob: ${(data.on_time_probability*100).toFixed(0)}%`;
+      document.getElementById('eta-opt').textContent = data.scenarios?.optimistic||'—';
+      document.getElementById('eta-exp').textContent = data.scenarios?.expected||'—';
+      document.getElementById('eta-pes').textContent = data.scenarios?.pessimistic||'—';
+      const f=data.factors||{};
+      document.getElementById('eta-factors').innerHTML = Object.entries(f).map(([k,v])=>
+        `<div style="margin:2px 0;font-size:10px"><span style="color:#4a7099">${k.replace(/_/g,' ')}:</span> <span style="font-family:'Space Mono',monospace">${v}h</span></div>`
+      ).join('');
+    });
+  }
+
+  function renderFeatureImportance() {
+    const feats=[
+      {name:'Port Congestion Index',pct:.22,color:'#3b82f6'},
+      {name:'Weather Severity',pct:.19,color:'#06b6d4'},
+      {name:'Route Complexity',pct:.15,color:'#8b5cf6'},
+      {name:'Carrier Reliability',pct:.13,color:'#10b981'},
+      {name:'Hist. Delay Rate',pct:.10,color:'#f59e0b'},
+      {name:'Customs Risk',pct:.09,color:'#f97316'},
+      {name:'Seasonal Risk',pct:.07,color:'#ef4444'},
+      {name:'Num Transshipments',pct:.05,color:'#7a9cc0'},
+    ];
+    document.getElementById('feat-importance').innerHTML=feats.map(f=>`
+      <div class="feat-row">
+        <span class="feat-name">${f.name}</span>
+        <div class="feat-bg"><div class="feat-fg" style="width:${f.pct*400}%;background:${f.color}"></div></div>
+        <span class="feat-pct">${(f.pct*100).toFixed(0)}%</span>
+      </div>`).join('');
+  }
+
+  function runQuery() {
+    const sql = document.getElementById('query-input')?.value;
+    if(!sql) return;
+    const res=document.getElementById('query-result');
+    res.innerHTML='<div style="color:var(--text-muted);font-size:11px;padding:8px">Running query...</div>';
+    fetch('/api/db/query',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sql})})
+      .then(r=>r.json()).then(({data,count,status,message})=>{
+        if(status==='error'){res.innerHTML=`<div style="color:var(--red);font-size:11px;padding:8px">Error: ${message}</div>`;return;}
+        if(!data||!data.length){res.innerHTML='<div class="empty-state">No results</div>';return;}
+        const cols=Object.keys(data[0]);
+        res.innerHTML=`<div style="font-size:9px;color:var(--text-muted);font-family:'Space Mono',monospace;margin-bottom:6px">${count} rows</div>
+          <table class="data-table" style="font-size:10px">
+            <thead><tr>${cols.map(c=>`<th>${c}</th>`).join('')}</tr></thead>
+            <tbody>${data.map(r=>`<tr>${cols.map(c=>`<td>${r[c]??''}</td>`).join('')}</tr>`).join('')}</tbody>
+          </table>`;
+      }).catch(e=>{res.innerHTML=`<div style="color:var(--red);font-size:11px;padding:8px">DB not connected: ${e.message}</div>`;});
+  }
+
+  document.addEventListener('DOMContentLoaded',()=>{
+    initCharts(); loadDemand();
+    fetch('/api/forecast?metric=on_time_rate&horizon=48').then(r=>r.json()).then(({data})=>fillLineChart(onTimeChart,data));
+    fetch('/api/forecast?metric=cost_index&horizon=48').then(r=>r.json()).then(({data})=>fillLineChart(costChart,data));
+    renderFeatureImportance();
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Data Ingestion — Supply Chain AI</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;700;800&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/main.css">
+<style>
+  body,html { overflow:auto; }
+  .main-content { overflow:auto; height:auto; }
+  .ing-grid { display:grid; grid-template-columns:1fr 1fr; gap:1px; background:var(--border); }
+  .full-width { grid-column:1/-1; }
+  .ing-card { background:var(--bg-card); padding:16px; }
+  .db-status-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-top:10px; }
+  .db-stat-box { background:var(--bg-surface); border:1px solid var(--border); border-radius:var(--radius-sm); padding:12px; text-align:center; }
+  .db-stat-val { font-size:18px; font-family:var(--font-mono); font-weight:700; color:var(--text-pri); }
+  .db-stat-lbl { font-size:9px; font-family:var(--font-mono); color:var(--text-muted); letter-spacing:.1em; margin-top:3px; }
+  .progress-bar-wrap { height:6px; background:var(--border); border-radius:3px; margin-top:6px; overflow:hidden; }
+  .progress-bar-fill { height:100%; border-radius:3px; background:var(--blue); transition:width .5s; }
+  .step-list { margin-top:12px; }
+  .step-item { display:flex; align-items:flex-start; gap:10px; padding:8px 0; border-bottom:1px solid rgba(30,45,66,.4); }
+  .step-num  { width:20px; height:20px; border-radius:50%; background:var(--bg-surface); border:1px solid var(--border); display:flex; align-items:center; justify-content:center; font-size:10px; font-family:var(--font-mono); color:var(--text-sec); flex-shrink:0; }
+  .step-content { flex:1; }
+  .step-title { font-size:12px; font-weight:600; color:var(--text-pri); margin-bottom:2px; }
+  .step-desc  { font-size:10px; color:var(--text-sec); }
+  .step-code  { font-family:var(--font-mono); font-size:10px; color:var(--cyan); background:var(--bg-base); padding:2px 6px; border-radius:2px; margin-top:4px; display:inline-block; }
+</style>
+</head>
+<body>
+<nav class="sidebar">
+  <div class="sidebar-brand"><div class="brand-icon">⬡</div><div><div class="brand-name">CHAIN<span class="accent">AI</span></div><div class="brand-sub">PostgreSQL Edition</div></div></div>
+  <div class="nav-section-label">NAVIGATION</div>
+  <ul class="nav-links">
+    <li><a href="/dashboard" class="nav-link"><span class="nav-icon">◈</span> Dashboard</a></li>
+    <li><a href="/routing"   class="nav-link"><span class="nav-icon">⤡</span> Route Optimizer</a></li>
+    <li><a href="/analytics" class="nav-link"><span class="nav-icon">◎</span> Analytics</a></li>
+    <li><a href="/ingestion" class="nav-link active"><span class="nav-icon">⇅</span> Data Ingestion</a></li>
+  </ul>
+</nav>
+
+<main class="main-content">
+  <header class="topbar">
+    <div class="topbar-left">
+      <h1 class="page-title">⇅ Data Ingestion Layer</h1>
+      <div class="live-badge">Kafka · REST · IoT · PostgreSQL · pgAdmin</div>
+    </div>
+    <div class="topbar-right">
+      <div class="timestamp" id="clock">--:--:--</div>
+      <button class="btn-primary" onclick="runAllETL()" style="padding:6px 14px;font-size:10px">▶ Run All ETL</button>
+    </div>
+  </header>
+
+  <div class="ing-grid">
+
+    <!-- DB Status -->
+    <div class="ing-card">
+      <div class="panel-header" style="padding:0 0 12px">
+        <span class="panel-title">🗄 PostgreSQL Connection Status</span>
+        <button class="btn-sm" onclick="loadDbStatus()">↺</button>
+      </div>
+      <div id="db-conn-status">
+        <div class="empty-state">Checking database connection...</div>
+      </div>
+      <div class="db-status-grid" id="db-stat-grid"></div>
+    </div>
+
+    <!-- File Upload -->
+    <div class="ing-card">
+      <div class="panel-header" style="padding:0 0 12px">
+        <span class="panel-title">File Upload → PostgreSQL</span>
+        <div style="font-size:10px;color:var(--text-muted);font-family:'Space Mono',monospace">CSV · XLSX · PDF · Word · Parquet · JSON</div>
+      </div>
+      <div class="upload-zone" id="upload-zone"
+           onclick="document.getElementById('file-input').click()"
+           ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event)">
+        <div class="upload-icon">⇅</div>
+        <div class="upload-text">Drop file here or click to browse</div>
+        <div class="upload-formats">Supported: .csv · .xlsx · .pdf · .docx · .parquet · .json</div>
+      </div>
+      <input type="file" id="file-input" style="display:none"
+             accept=".csv,.xlsx,.xls,.pdf,.doc,.docx,.parquet,.json" onchange="handleFileSelect(event)">
+      <div style="display:flex;align-items:center;gap:8px;margin-top:10px">
+        <input type="checkbox" id="load-to-db" style="accent-color:var(--blue)">
+        <label for="load-to-db" style="font-size:11px;color:var(--text-sec)">Also load CSV into PostgreSQL shipments_master table</label>
+      </div>
+      <div id="upload-prog" style="display:none;margin-top:8px">
+        <div style="font-size:10px;font-family:'Space Mono',monospace;color:var(--blue);margin-bottom:4px">Processing...</div>
+        <div class="progress-bar-wrap"><div class="progress-bar-fill" id="prog-bar" style="width:0%"></div></div>
+      </div>
+      <div id="upload-result" style="display:none;margin-top:10px"></div>
+    </div>
+
+    <!-- ETL Pipeline Status -->
+    <div class="ing-card full-width">
+      <div class="panel-header" style="padding:0 0 12px">
+        <span class="panel-title">ETL Pipeline Status — All Sources</span>
+        <div style="display:flex;gap:8px">
+          <select class="select-sm" id="etl-src-select">
+            <option value="all">All Sources</option>
+            <option value="gps_iot">GPS/IoT</option>
+            <option value="weather_api">Weather API</option>
+            <option value="port_congestion">Port Congestion</option>
+            <option value="historical_db">Historical DB</option>
+            <option value="kafka_stream">Kafka Stream</option>
+          </select>
+          <button class="btn-primary" style="padding:5px 14px;font-size:10px" onclick="runSelectedETL()">▶ Run Pipeline</button>
+        </div>
+      </div>
+      <div style="overflow-x:auto">
+        <div class="etl-source-row etl-header" style="padding:4px 0">
+          <span>SOURCE</span><span>STATUS</span><span>ROWS LOADED</span><span>TABLE SIZE</span><span>QUALITY</span><span>LAST RUN</span>
+        </div>
+        <div id="etl-list"><div class="empty-state">Loading ETL status...</div></div>
+      </div>
+    </div>
+
+    <!-- Setup Guide -->
+    <div class="ing-card">
+      <div class="panel-header" style="padding:0 0 12px">
+        <span class="panel-title">pgAdmin Setup Guide</span>
+      </div>
+      <div class="step-list">
+        <div class="step-item"><div class="step-num">1</div><div class="step-content">
+          <div class="step-title">Install & Start pgAdmin</div>
+          <div class="step-desc">Download pgAdmin 4 from pgadmin.org or use Docker:</div>
+          <div class="step-code">docker-compose up pgadmin</div>
+        </div></div>
+        <div class="step-item"><div class="step-num">2</div><div class="step-content">
+          <div class="step-title">Configure .env Credentials</div>
+          <div class="step-desc">Edit <code style="color:var(--cyan)">.env</code> with your PostgreSQL host, port, dbname, user, password.</div>
+        </div></div>
+        <div class="step-item"><div class="step-num">3</div><div class="step-content">
+          <div class="step-title">Run Database Setup Script</div>
+          <div class="step-desc">Creates tables, indexes and bulk-loads both CSV files:</div>
+          <div class="step-code">python setup_db.py</div>
+        </div></div>
+        <div class="step-item"><div class="step-num">4</div><div class="step-content">
+          <div class="step-title">Verify in pgAdmin UI</div>
+          <div class="step-desc">Open pgAdmin → connect to DB → check tables shipments_master and route_events (5M rows each).</div>
+        </div></div>
+        <div class="step-item"><div class="step-num">5</div><div class="step-content">
+          <div class="step-title">Start Live Stream</div>
+          <div class="step-desc">Go to Dashboard → click ▶ Start Live Stream. 5 real DB records stream every 10 seconds.</div>
+        </div></div>
+      </div>
+    </div>
+
+    <!-- Run Log -->
+    <div class="ing-card">
+      <div class="panel-header" style="padding:0 0 12px">
+        <span class="panel-title">ETL Run Log</span>
+      </div>
+      <div id="run-log" style="max-height:350px;overflow-y:auto">
+        <div class="empty-state">Run a pipeline to see logs</div>
+      </div>
+    </div>
+
+  </div>
+</main>
+
+<script>
+  setInterval(()=>{ const el=document.getElementById('clock'); if(el) el.textContent=new Date().toLocaleTimeString(); },1000);
+
+  function handleDragOver(e){ e.preventDefault(); document.getElementById('upload-zone').classList.add('dragover'); }
+  function handleDragLeave(){ document.getElementById('upload-zone').classList.remove('dragover'); }
+  function handleDrop(e){ e.preventDefault(); document.getElementById('upload-zone').classList.remove('dragover'); const f=e.dataTransfer.files[0]; if(f) uploadFile(f); }
+  function handleFileSelect(e){ const f=e.target.files[0]; if(f) uploadFile(f); }
+
+  function uploadFile(file) {
+    document.getElementById('upload-prog').style.display='block';
+    document.getElementById('upload-result').style.display='none';
+    let p=0; const bar=document.getElementById('prog-bar');
+    const iv=setInterval(()=>{ p=Math.min(p+Math.random()*12,88); bar.style.width=p+'%'; },120);
+    const form=new FormData(); form.append('file',file);
+    const loadToDB=document.getElementById('load-to-db')?.checked;
+    if(loadToDB) form.append('load_to_db','true');
+    fetch('/api/upload',{method:'POST',body:form})
+      .then(r=>r.json()).then(resp=>{
+        clearInterval(iv); bar.style.width='100%';
+        setTimeout(()=>{ document.getElementById('upload-prog').style.display='none'; renderUploadResult(resp,file.name); },300);
+      }).catch(e=>{ clearInterval(iv); document.getElementById('upload-prog').style.display='none'; });
+  }
+
+  function renderUploadResult(resp,fname) {
+    const el=document.getElementById('upload-result'); el.style.display='block';
+    const d=resp.data||{};
+    const icon={csv:' ',pdf:' ',docx:' ',parquet:' ',json:'{ }',excel:' '}[d.format]||' ';
+    let rows='';
+    if(d.rows!=null) rows+=`<tr><td>ROWS</td><td style="color:var(--text-pri)">${d.rows.toLocaleString()}</td></tr>`;
+    if(d.columns) rows+=`<tr><td>COLUMNS</td><td style="color:var(--text-pri)">${d.columns.slice(0,8).join(', ')}${d.columns.length>8?'...':''}</td></tr>`;
+    if(d.pages!=null) rows+=`<tr><td>PAGES</td><td style="color:var(--text-pri)">${d.pages}</td></tr>`;
+    if(d.ml_ready) rows+=`<tr><td>ML READY</td><td style="color:var(--green)">Completeness: ${(d.ml_ready.completeness*100).toFixed(0)}% · ${d.ml_ready.numeric_features} numeric features</td></tr>`;
+    if(resp.data?.db_load) rows+=`<tr><td>DB LOAD</td><td style="color:${resp.data.db_load.status==='success'?'var(--green)':'var(--yellow)'}">${resp.data.db_load.status} · ${(resp.data.db_load.rows_loaded||0).toLocaleString()} rows</td></tr>`;
+    el.innerHTML=`<div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+        <span style="font-size:22px">${icon}</span>
+        <div><div style="font-weight:700;color:var(--text-pri)">${fname}</div>
+             <div style="font-size:10px;color:var(--green);font-family:'Space Mono',monospace">✓ PARSED</div></div>
+      </div>
+      <table class="result-table">${rows}</table>
+    </div>`;
+  }
+
+  function loadDbStatus() {
+    fetch('/api/db/status').then(r=>r.json()).then(({db_connected,host,database,table_stats})=>{
+      const statusEl=document.getElementById('db-conn-status');
+      statusEl.innerHTML=`<div style="display:flex;align-items:center;gap:10px;padding:10px;background:${db_connected?'rgba(16,185,129,.08)':'rgba(239,68,68,.08)'};border:1px solid ${db_connected?'rgba(16,185,129,.3)':'rgba(239,68,68,.3)'};border-radius:var(--radius-sm)">
+        <span style="font-size:20px">${db_connected?'🟢':'🔴'}</span>
+        <div><div style="font-weight:700;color:var(--text-pri)">${db_connected?'Connected':'Not Connected'}</div>
+             <div style="font-size:10px;color:var(--text-sec);font-family:'Space Mono',monospace">${host} → ${database}</div></div>
+      </div>`;
+      const gridEl=document.getElementById('db-stat-grid');
+      if(db_connected && table_stats){
+        const sm=table_stats.shipments_master||{};
+        const re=table_stats.route_events||{};
+        gridEl.innerHTML=[
+          ['Shipments Master',sm.row_count?.toLocaleString()||'0',sm.size||'—'],
+          ['Route Events',re.row_count?.toLocaleString()||'0',re.size||'—'],
+          ['Total Records',((sm.row_count||0)+(re.row_count||0)).toLocaleString(),'Combined'],
+        ].map(([lbl,val,sub])=>`<div class="db-stat-box">
+          <div class="db-stat-val">${val}</div>
+          <div class="db-stat-lbl">${lbl}</div>
+          <div style="font-size:9px;color:var(--blue);margin-top:2px">${sub}</div>
+        </div>`).join('');
+      } else {
+        gridEl.innerHTML='<div class="empty-state" style="grid-column:1/-1">Connect PostgreSQL to see table stats</div>';
+      }
+    });
+  }
+
+  function refreshETL() {
+    fetch('/api/etl/status').then(r=>r.json()).then(({data})=>{
+      document.getElementById('etl-list').innerHTML=data.map(s=>{
+        const sc={healthy:'var(--green)',empty:'var(--yellow)',db_unavailable:'var(--red)',no_table:'var(--text-muted)'}[s.status]||'var(--text-muted)';
+        return `<div class="etl-source-row">
+          <div><div style="font-weight:600;color:var(--text-pri);font-size:11px">${s.name}</div><div style="font-size:9px;color:var(--text-muted);font-family:'Space Mono',monospace">${s.frequency}</div></div>
+          <div><span class="pill" style="background:transparent;color:${sc};border-color:${sc}50;font-size:8px">${s.status.toUpperCase()}</span></div>
+          <div style="font-family:'Space Mono',monospace;font-size:10px;color:var(--text-sec)">${(s.row_count||0).toLocaleString()}</div>
+          <div style="font-size:10px;color:var(--text-sec)">${s.table_size||'—'}</div>
+          <div style="font-size:10px;color:var(--green)">${s.db_connected?'98%':'—'}</div>
+          <div style="font-size:10px;color:var(--text-muted)">${new Date().toLocaleTimeString()}</div>
+        </div>`;
+      }).join('');
+    });
+  }
+
+  function runAllETL() { runETL('all'); }
+  function runSelectedETL() { runETL(document.getElementById('etl-src-select').value); }
+
+  function runETL(source) {
+    const log=document.getElementById('run-log');
+    log.innerHTML='<div class="empty-state" style="color:var(--blue)">⚡ Running pipeline...</div>';
+    fetch('/api/etl/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source})})
+      .then(r=>r.json()).then(({data})=>{
+        const res=Object.entries(data||{})
+          .filter(([key, value]) => value && typeof value === 'object' && !Array.isArray(value) && key !== 'validation')
+          .map(([key, value]) => ({source:key, ...value}));
+        log.innerHTML=`<div style="padding:12px">
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px">
+            ${[['STATUS',data.pipeline_status||'—','var(--green)'],
+               ['TOTAL RECORDS',(((data.shipments_master||{}).rows_loaded||0)+((data.route_events||{}).rows_loaded||0)).toLocaleString(),'var(--text-pri)'],
+               ['SOURCES',res.length,'var(--text-pri)'],
+               ['SCHEMA',data.schema_setup||'—','var(--cyan)'],
+              ].map(([l,v,c])=>`<div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px;text-align:center">
+                <div style="font-size:9px;font-family:'Space Mono',monospace;color:var(--text-muted)">${l}</div>
+                <div style="font-size:12px;font-family:'Space Mono',monospace;font-weight:700;color:${c};margin-top:4px">${v}</div>
+              </div>`).join('')}
+          </div>
+          ${res.length?`<table class="data-table"><thead><tr><th>SOURCE</th><th>STATUS</th><th>RECORDS</th><th>ERRORS</th><th>METHOD</th></tr></thead>
+          <tbody>${res.map(r=>`<tr>
+            <td>${r.source}</td>
+              <td><span class="pill ${r.status==='success'?'pill-ok':'pill-warn'}">${r.status||'â€”'}</span></td>
+            <td style="font-family:'Space Mono',monospace">${(r.rows_loaded||0).toLocaleString()}</td>
+            <td style="color:${(r.rows_errored||0)>0?'var(--red)':'var(--text-muted)'}">${r.rows_errored||0}</td>
+            <td style="font-size:10px;color:var(--text-muted)">${r.method||'—'}</td>
+          </tr>`).join('')}</tbody></table>`:''}
+        </div>`;
+        refreshETL(); loadDbStatus();
+      });
+  }
+
+  document.addEventListener('DOMContentLoaded',()=>{ loadDbStatus(); refreshETL(); setInterval(refreshETL,20000); });
+</script>
+</body>
+</html>

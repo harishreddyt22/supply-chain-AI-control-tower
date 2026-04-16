@@ -1,0 +1,37 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Virtual env
+.venv/
+venv/
+env/
+
+# Environment files
+.env.example
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# IDEs
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+
+# Logs and outputs
+data/logs/
+data/outputs/
+
+# SQLite DB (optional; remove if you want to keep db in git)
+data/*.db
+
+# Python packaging
+pip-wheel-metadata/
+
+# Terminal history
+*.log
